@@ -1,7 +1,7 @@
 @{
     GameRoot       = 'C:\Program Files (x86)\Origin Games\FIFA 14\Game'
     GameExe        = 'C:\Program Files (x86)\Origin Games\FIFA 14\Game\fifa14.exe'
-    ServerHost     = '192.168.1.50'
+    ServerHost     = '192.168.1.2'
     ServerHttpPort = '8099'
     AdminSecret    = 'change-me-strong-secret'
 }
