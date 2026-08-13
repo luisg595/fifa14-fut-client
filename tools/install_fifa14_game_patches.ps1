@@ -88,7 +88,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $projectRoot "config.local.psd1"))) 
     Write-Host "Saved config.local.psd1"
 }
 
-$ports = @(42129, 42128, 8080, 8099, 8306, 44125)
+$ports = @(42129, 42128, 8081, 8099, 8306, 44125)
 Write-Host ""
 Write-Host "== Server port reachability (from this Windows host) =="
 foreach ($port in $ports) {
