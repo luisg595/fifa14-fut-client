@@ -16,6 +16,26 @@ if ([string]::IsNullOrWhiteSpace($serverSettings.ServerHost)) {
 $ServerHost = $serverSettings.ServerHost
 $ServerHttpPort = $serverSettings.ServerHttpPort
 
+$accountKey = ""
+while ($true) {
+    $prompt = Read-Host "Account key (Enter = default; [A-Za-z0-9_-]{1,63})"
+    $prompt = ($prompt | ForEach-Object { $_.Trim() })
+    if ([string]::IsNullOrWhiteSpace($prompt)) {
+        $accountKey = ""
+        break
+    }
+    if ($prompt -match '^[A-Za-z0-9_-]{1,63}$') {
+        $accountKey = $prompt
+        break
+    }
+    Write-Host "Invalid account key. Use only A-Z a-z 0-9 _ - (1-63 chars)." -ForegroundColor Yellow
+}
+if ($accountKey) {
+    Write-Host "Account: $accountKey" -ForegroundColor Cyan
+} else {
+    Write-Host "Account: (default)" -ForegroundColor Cyan
+}
+
 Write-Host "Server: http://${ServerHost}:${ServerHttpPort}" -ForegroundColor Cyan
 
 Stop-Fifa14ForOnDiskPatch
@@ -100,6 +120,9 @@ try {
         "--log", (Quote-Arg $helperLog),
         "--run-seconds", "1800"
     ) -join " "
+    if ($accountKey) {
+        $helperArgs = $helperArgs + " " + "--account" + " " + (Quote-Arg $accountKey)
+    }
 
     $helper = Start-Process -FilePath $python -ArgumentList $helperArgs `
         -RedirectStandardOutput $helperOut -RedirectStandardError $helperErr `

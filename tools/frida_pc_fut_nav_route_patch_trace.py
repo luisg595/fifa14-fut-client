@@ -32,8 +32,9 @@ def _js_bytes(value: bytes) -> str:
     return ", ".join(f"0x{item:02x}" for item in value)
 
 
-def build_agent(ca_bytes: bytes) -> str:
+def build_agent(ca_bytes: bytes, easw_session_value: str = "LOCAL-FIFA14-EASW-SESSION") -> str:
     encoded_ca = base64.b64encode(ca_bytes).decode("ascii")
+    encoded_easw = _js_bytes(easw_session_value)
     agent = r"""
 'use strict';
 
@@ -43,6 +44,12 @@ const EXPECTED_FIFA_IMAGE_SIZE = 0x04b7a000;
 // Store + ResetMatch paths were firing dozens of times per second and stalling
 // the render thread while packs were being browsed.
 const RUNTIME_PERFORMANCE_MODE = true;
+// BETA 2.25.1 diagnostic: tournament match kickoff aborts to fcc_logout ~16s
+// after accepting POST /match (same symptom as BETA 2.16).  Keep the heavy
+// traces off but turn the WebSession match-bridge trace (CreateMatch/MatchReady/
+// DestroyMatch/PlayGame/ResetMatch/UpdateTournament) back on to capture where
+// the client aborts before PlayGame.
+const MATCH_BRIDGE_TRACE_ENABLED = true;
 const CA_FUNCTION_RVA = 0x00d99790;
 const UPDATE_RVA = 0x00d9a0b0;
 const SCREEN_EVENT_DISPATCHER_RVA = 0x0010eca0;
@@ -2588,7 +2595,7 @@ function attachCardsHooksOnce(reason) {
   installNativeOfflineStadiumHooks(module, reason);
   installViewCardsEmptyListGuard(module, reason);
   installActivateCardTrace(module, reason);
-  if (!RUNTIME_PERFORMANCE_MODE) installMatchBridgeTrace(module, reason);
+  if (MATCH_BRIDGE_TRACE_ENABLED) installMatchBridgeTrace(module, reason);
   installMainHubRecordOverride(module, reason);
   installBadgeUiOverride(module, reason);
   installUserRecordTrace(module, reason);
@@ -2622,7 +2629,7 @@ function attachCardsHooksOnce(reason) {
 
   if (localEaswSessionPointer === null) {
     localEaswSessionPointer = Memory.alloc(64);
-    localEaswSessionPointer.writeUtf8String('LOCAL-FIFA14-EASW-SESSION');
+    localEaswSessionPointer.writeUtf8String(__EASW_SESSION_VALUE__);
     localEaswTokenPointer = Memory.alloc(64);
     localEaswTokenPointer.writeUtf8String('LOCAL-FIFA14-EASW-TOKEN');
     emit('cards-authenticated-icebreaker-local-credentials-allocated', {
@@ -3918,6 +3925,7 @@ send({
         .replace("__CA_SIGNATURE__", _js_bytes(CA_FUNCTION_SIGNATURE))
         .replace("__UPDATE_SIGNATURE__", _js_bytes(UPDATE_SIGNATURE))
         .replace("__DISPATCH_SIGNATURE__", _js_bytes(SCREEN_EVENT_DISPATCHER_SIGNATURE))
+        .replace("__EASW_SESSION_VALUE__", encoded_easw)
     )
 
 
@@ -3929,6 +3937,7 @@ def main() -> int:
     parser.add_argument("--identity-db")
     parser.add_argument("--run-seconds", type=int, default=1800)
     parser.add_argument("--server-ip", default="127.0.0.1", help="LAN IP of the remote fifa14-fut-server redirector")
+    parser.add_argument("--account", default="", help="FUT account key carried in identification.EASW-Session (empty = default account)")
     parser.add_argument("--print-agent", action="store_true")
     args = parser.parse_args()
 
@@ -3941,7 +3950,13 @@ def main() -> int:
         try:
             with sqlite3.connect(database, timeout=0.1) as connection:
                 connection.row_factory = sqlite3.Row
-                identity = connection.execute("SELECT persona_id FROM identity WHERE singleton=1").fetchone()
+                identity_columns = {str(r["name"]) for r in connection.execute("PRAGMA table_info(identity)").fetchall()}
+                if "singleton" in identity_columns:
+                    identity = connection.execute("SELECT persona_id FROM identity WHERE singleton=1").fetchone()
+                else:
+                    identity = connection.execute(
+                        "SELECT persona_id FROM identity WHERE persona_id=1000001"
+                    ).fetchone()
                 if identity is None:
                     return None
                 rows = connection.execute(
@@ -3968,7 +3983,13 @@ def main() -> int:
         try:
             with sqlite3.connect(database, timeout=0.1) as connection:
                 connection.row_factory = sqlite3.Row
-                identity = connection.execute("SELECT persona_id FROM identity WHERE singleton=1").fetchone()
+                identity_columns = {str(r["name"]) for r in connection.execute("PRAGMA table_info(identity)").fetchall()}
+                if "singleton" in identity_columns:
+                    identity = connection.execute("SELECT persona_id FROM identity WHERE singleton=1").fetchone()
+                else:
+                    identity = connection.execute(
+                        "SELECT persona_id FROM identity WHERE persona_id=1000001"
+                    ).fetchone()
                 if identity is None:
                     return None
                 persona_id = int(identity["persona_id"])
@@ -3987,7 +4008,10 @@ def main() -> int:
     except ipaddress.AddressValueError:
         parser.error("--server-ip must be a 4-octet IPv4 address")
 
-    agent = build_agent(Path(args.ca_file).read_bytes())
+    agent = build_agent(
+        Path(args.ca_file).read_bytes(),
+        easw_session_value=(args.account or "LOCAL-FIFA14-EASW-SESSION"),
+    )
     agent = agent.replace("__SERVER_IP_BYTES__", _js_bytes(server_ip_octets))
     if args.print_agent:
         print(agent)
