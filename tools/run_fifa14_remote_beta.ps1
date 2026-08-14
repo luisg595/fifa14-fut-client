@@ -36,6 +36,12 @@ if ($accountKey) {
     Write-Host "Account: (default)" -ForegroundColor Cyan
 }
 
+# Persist the account chosen for this session so GIVE_100M_TEST_COINS.cmd can
+# target the same persona without asking (see give_coins_remote.ps1).
+$currentAccountFile = Join-Path $projectRoot "artifacts\fut-current-account.txt"
+New-Item -ItemType Directory -Path (Split-Path -Parent $currentAccountFile) -Force | Out-Null
+[IO.File]::WriteAllText($currentAccountFile, $accountKey, [Text.Encoding]::ASCII)
+
 Write-Host "Server: http://${ServerHost}:${ServerHttpPort}" -ForegroundColor Cyan
 
 Stop-Fifa14ForOnDiskPatch
