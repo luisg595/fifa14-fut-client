@@ -34,7 +34,7 @@ def _js_bytes(value: bytes) -> str:
 
 def build_agent(ca_bytes: bytes, easw_session_value: str = "LOCAL-FIFA14-EASW-SESSION") -> str:
     encoded_ca = base64.b64encode(ca_bytes).decode("ascii")
-    encoded_easw = _js_bytes(easw_session_value)
+    encoded_easw = json.dumps(easw_session_value)
     agent = r"""
 'use strict';
 
