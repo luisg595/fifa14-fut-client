@@ -999,6 +999,26 @@ function noteDynamicFallbackDns(node) {
   } catch (_) {}
 }
 
+// V2.40.10: per-socket destination labelling + unconditional low-volume I/O
+// trace.  The pack runtime proved the purchase gap has zero connects/DNS; this
+// reveals whether the game is reading/writing the persistent Blaze socket
+// (192.168.1.2:42128, observed as fd 8160) while it waits.
+const socketDestByFd = Object.create(null);
+const socketLastIoEmitByFd = Object.create(null);
+function socketLabel(fd) {
+  const dest = socketDestByFd[String(fd)];
+  return dest ? (dest.ip + ':' + dest.port) : null;
+}
+function noteSocketIo(fd, kind, bytes, extra) {
+  const key = String(fd);
+  const now = nowMs();
+  const last = socketLastIoEmitByFd[key] || 0;
+  if (now - last < 1000) return;
+  socketLastIoEmitByFd[key] = now;
+  emitDiagnostic('client-socket-io', Object.assign({
+    socket: fd, dest: socketLabel(fd), kind: kind, bytes: bytes, thread_id: tid()
+  }, extra || {}));
+}
 function hookConnect(name) {
   const address = Module.findGlobalExportByName(name);
   if (address === null) { emit('trusted-console-hook-missing', {export: name}); return; }
@@ -1012,6 +1032,7 @@ function hookConnect(name) {
         if (sockaddr.readU16() !== 2) return;
         const port = (sockaddr.add(2).readU8() << 8) | sockaddr.add(3).readU8();
         const originalIp = [0,1,2,3].map(i => sockaddr.add(4 + i).readU8()).join('.');
+        socketDestByFd[String(args[0].toUInt32())] = {ip: originalIp, port: port};
         emitDiagnostic('client-connect-any', {export: name, socket: args[0].toUInt32(), original_ip: originalIp, port: port, thread_id: tid()});
         if (trustedWindowActive) {
           emit('trusted-console-connect', {export: name, socket: args[0].toUInt32(), original_ip: originalIp, port: port, thread_id: tid()});
@@ -1078,6 +1099,7 @@ function hookSend() {
     const length = args[2].toInt32();
     const count = Math.max(0, Math.min(length, 4096));
     const previewText = cstring(args[1], count);
+    noteSocketIo(args[0].toUInt32(), 'send', length, {preview_text: cstring(args[1], Math.min(length, 64))});
     // Competition tracing must be armed from the request, not the response.
     // BETA 2.4 armed from the later scalar response callback, after the season
     // list parser had already performed ten reward-item lookups. Inspect only
@@ -1092,11 +1114,13 @@ function hookWSASend() {
   if (address === null) return;
   Interceptor.attach(address, {onEnter(args) {
     const count = Math.min(args[2].toUInt32(), 3);
+    let totalBytes = 0;
     const buffers = [];
     for (let i = 0; i < count; i++) {
       try {
         const item = args[1].add(i * 8);
         const length = item.readU32();
+        totalBytes += length;
         const buffer = item.add(4).readPointer();
         const preview = Math.min(length, 4096);
         const text = cstring(buffer, preview);
@@ -1104,6 +1128,7 @@ function hookWSASend() {
         if (trustedWindowActive) buffers.push({length: length, text: text, hex: hexBytes(raw(buffer, preview))});
       } catch (_) {}
     }
+    noteSocketIo(args[0].toUInt32(), 'WSASend', totalBytes);
     if (!trustedWindowActive) return;
     emit('trusted-console-send', {export: 'WSASend', socket: args[0].toUInt32(), buffers: buffers, thread_id: tid()});
   }});
@@ -1114,11 +1139,13 @@ function hookRecv() {
   Interceptor.attach(address, {
     onEnter(args) {
       this.capture = trustedWindowActive;
-      if (this.capture) { this.socket = args[0].toUInt32(); this.buffer = args[1]; }
+      this.socket = args[0].toUInt32();
+      this.buffer = args[1];
     },
     onLeave(retval) {
-      if (!this.capture) return;
       const length = retval.toInt32();
+      if (length > 0) noteSocketIo(this.socket, 'recv', length, {preview_text: cstring(this.buffer, Math.min(length, 64))});
+      if (!this.capture) return;
       // ProtoHttp often reads HTTP status/header bytes one at a time. V2.35
       // exhausted the per-kind event budget before the later My Club/static-art
       // traffic arrived. Ignore those one-byte reads and preserve the useful
@@ -1135,17 +1162,18 @@ function hookWSARecv() {
   Interceptor.attach(address, {
     onEnter(args) {
       this.capture = trustedWindowActive;
-      if (!this.capture) return;
       this.socket = args[0].toUInt32();
-      this.buffers = args[1];
-      this.bufferCount = Math.min(args[2].toUInt32(), 3);
       this.bytesPointer = args[3];
       this.overlapped = args[5];
+      if (!this.capture) return;
+      this.buffers = args[1];
+      this.bufferCount = Math.min(args[2].toUInt32(), 3);
     },
     onLeave(retval) {
-      if (!this.capture) return;
       let transferred = null;
       try { if (!this.bytesPointer.isNull()) transferred = this.bytesPointer.readU32(); } catch (_) {}
+      if (transferred !== null && transferred > 0) noteSocketIo(this.socket, 'WSARecv', transferred);
+      if (!this.capture) return;
       if (transferred === 1) return;
       const buffers = [];
       for (let i = 0; i < this.bufferCount; i++) {
@@ -1164,6 +1192,32 @@ function hookWSARecv() {
       });
     }
   });
+}
+
+// V2.40.10: report any thread blocked for >= 2 seconds.  The pack runtime proved
+// the ~17-19s purchase gaps have zero connects and zero DNS; this names the
+// wait primitive (Sleep/SleepEx/WaitForSingleObject/select/WSAPoll/
+// WSAWaitForMultipleEvents) and thread that actually stalls the front end.
+const LONG_WAIT_MS = 2000;
+let longWaitHooksInstalled = false;
+function hookLongWaits() {
+  if (longWaitHooksInstalled) return;
+  longWaitHooksInstalled = true;
+  const exports = ['Sleep', 'SleepEx', 'WaitForSingleObject', 'WaitForSingleObjectEx', 'select', 'WSAPoll', 'WSAWaitForMultipleEvents'];
+  exports.forEach(function (name) {
+    const address = Module.findGlobalExportByName(name);
+    if (address === null) { emit('client-long-wait-hook-missing', {export: name}); return; }
+    Interceptor.attach(address, {
+      onEnter() { this.enteredMs = nowMs(); },
+      onLeave() {
+        const elapsedMs = nowMs() - this.enteredMs;
+        if (elapsedMs >= LONG_WAIT_MS) {
+          emitDiagnostic('client-long-wait', {export: name, elapsed_ms: elapsedMs, thread_id: tid()});
+        }
+      }
+    });
+  });
+  emit('client-long-wait-hooks-ready', {exports: exports, threshold_ms: LONG_WAIT_MS});
 }
 
 function installCardsHook(module, spec, callbacks) {
@@ -3683,6 +3737,7 @@ hookSend();
 hookWSASend();
 hookRecv();
 hookWSARecv();
+hookLongWaits();
 
 const fifa = Process.getModuleByName('fifa14.exe');
 const fifaSizeOk = fifa.size === EXPECTED_FIFA_IMAGE_SIZE;
