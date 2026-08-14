@@ -4,6 +4,19 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "common.ps1")
 
 $projectRoot = Get-ProjectRoot
+
+# First run convenience: INSTALL_GAME_PATCHES.cmd is the natural first step for
+# a new machine, so bootstrap the Python environment here instead of requiring a
+# separate manual step. Re-runs are no-ops once .venv exists.
+$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+    Write-Host "Primera vez: configurando el entorno de Python (instala Frida, un momento)..." -ForegroundColor Yellow
+    & (Join-Path $PSScriptRoot "bootstrap.ps1")
+    if ($LASTEXITCODE -ne 0) {
+        throw "bootstrap.ps1 failed. Ensure Python 3.10+ is installed (https://www.python.org/downloads/) and retry."
+    }
+}
+
 $python = Resolve-ProjectPython
 
 $paths = Resolve-Fifa14Paths -PromptIfMissing -PersistDetected

@@ -41,11 +41,11 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
     }
 
     if (-not $pythonLauncher) {
-        throw "Python 3.10+ was not found. Run INSTALL_PREREQUISITES.cmd and retry."
+        throw "Python 3.10+ was not found. Install it from https://www.python.org/downloads/ (or `winget install Python.Python.3.12`) and retry."
     }
 
     & $pythonLauncher @pythonPrefix -c "import sys; assert sys.version_info >= (3,10)"
-    if ($LASTEXITCODE -ne 0) { throw "Python 3.10+ is required. Run INSTALL_PREREQUISITES.cmd and retry." }
+    if ($LASTEXITCODE -ne 0) { throw "Python 3.10+ is required. Install it from https://www.python.org/downloads/ and retry." }
     & $pythonLauncher @pythonPrefix -m venv $venvDir
     if ($LASTEXITCODE -ne 0) { throw "Failed to create the Python virtual environment." }
 }
