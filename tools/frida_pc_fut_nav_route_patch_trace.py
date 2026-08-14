@@ -536,6 +536,11 @@ function emit(kind, payload) {
   if (count <= 1000) send({kind: kind, index: count, time_ms: nowMs(), ...payload});
   else if (count === 1001) send({kind: kind + '-suppressed', limit: 1000});
 }
+function emitDiagnostic(kind, payload) {
+  const count = (counters[kind] || 0) + 1;
+  counters[kind] = count;
+  send({kind: kind, index: count, time_ms: nowMs(), ...payload});
+}
 function verify(address, signature) {
   try {
     const actual = listBytes(address.readByteArray(signature.length));
@@ -997,6 +1002,8 @@ function noteDynamicFallbackDns(node) {
 function hookConnect(name) {
   const address = Module.findGlobalExportByName(name);
   if (address === null) { emit('trusted-console-hook-missing', {export: name}); return; }
+  const wsaGetLastErrorAddress = Module.findGlobalExportByName('WSAGetLastError');
+  const wsaGetLastError = wsaGetLastErrorAddress === null ? null : new NativeFunction(wsaGetLastErrorAddress, 'int', []);
   Interceptor.attach(address, {
     onEnter(args) {
       const sockaddr = args[1];
@@ -1005,6 +1012,7 @@ function hookConnect(name) {
         if (sockaddr.readU16() !== 2) return;
         const port = (sockaddr.add(2).readU8() << 8) | sockaddr.add(3).readU8();
         const originalIp = [0,1,2,3].map(i => sockaddr.add(4 + i).readU8()).join('.');
+        emitDiagnostic('client-connect-any', {export: name, socket: args[0].toUInt32(), original_ip: originalIp, port: port, thread_id: tid()});
         if (trustedWindowActive) {
           emit('trusted-console-connect', {export: name, socket: args[0].toUInt32(), original_ip: originalIp, port: port, thread_id: tid()});
         }
@@ -1023,6 +1031,10 @@ function hookConnect(name) {
           });
         }
       } catch (error) { emit('trusted-console-connect-error', {export: name, error: String(error)}); }
+    },
+    onLeave(retval) {
+      const result = retval.toInt32();
+      if (result !== 0) emitDiagnostic('client-connect-result', {export: name, result: result, errno: wsaGetLastError === null ? -1 : wsaGetLastError(), thread_id: tid()});
     }
   });
 }
@@ -1030,9 +1042,10 @@ function hookDnsA(name) {
   const address = Module.findGlobalExportByName(name);
   if (address === null) return;
   Interceptor.attach(address, {onEnter(args) {
-    if (!trustedWindowActive) return;
     const node = cstring(args[0], 512);
     noteDynamicFallbackDns(node);
+    emitDiagnostic('client-dns-any', {export: name, node: node, service: cstring(args[1], 64), thread_id: tid()});
+    if (!trustedWindowActive) return;
     emit('trusted-console-dns', {export: name, node: node, service: cstring(args[1], 64), thread_id: tid()});
   }});
 }
@@ -1040,9 +1053,10 @@ function hookDnsW(name) {
   const address = Module.findGlobalExportByName(name);
   if (address === null) return;
   Interceptor.attach(address, {onEnter(args) {
-    if (!trustedWindowActive) return;
     const node = utf16(args[0], 256);
     noteDynamicFallbackDns(node);
+    emitDiagnostic('client-dns-any', {export: name, node: node, service: utf16(args[1], 64), thread_id: tid()});
+    if (!trustedWindowActive) return;
     emit('trusted-console-dns', {export: name, node: node, service: utf16(args[1], 64), thread_id: tid()});
   }});
 }
@@ -1050,9 +1064,10 @@ function hookHostByName() {
   const address = Module.findGlobalExportByName('gethostbyname');
   if (address === null) return;
   Interceptor.attach(address, {onEnter(args) {
-    if (!trustedWindowActive) return;
     const node = cstring(args[0], 512);
     noteDynamicFallbackDns(node);
+    emitDiagnostic('client-dns-any', {export: 'gethostbyname', node: node, thread_id: tid()});
+    if (!trustedWindowActive) return;
     emit('trusted-console-dns', {export: 'gethostbyname', node: node, thread_id: tid()});
   }});
 }
