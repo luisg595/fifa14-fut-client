@@ -14,6 +14,11 @@ Conecta con el servidor Debian/Docker `fifa14-fut-server` por LAN.
    ```powershell
    powershell -ExecutionPolicy Bypass -File tools\bootstrap.ps1
    ```
+   **Alternativa automática:** `INSTALL_GAME_PATCHES.cmd` instala los prerequisitos
+   (Python 3.10+ si falta — pide permisos de Administrador la primera vez — y el
+   `.venv` con Frida) antes de aplicar los parches. En una máquina limpia con
+   internet, basta con ese doble-clic. `INSTALL_PREREQUISITES.cmd` hace solo la
+   parte de prerequisitos si quieres separar el paso.
 2. Copiar `config.local.psd1.example` a `config.local.psd1` y editar:
    - `GameRoot` / `GameExe` → tu instalación de FIFA 14.
    - `ServerHost` → IP-LAN del server (la imprime `up.sh`).

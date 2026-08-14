@@ -6,14 +6,16 @@ Set-StrictMode -Version Latest
 $projectRoot = Get-ProjectRoot
 
 # First run convenience: INSTALL_GAME_PATCHES.cmd is the natural first step for
-# a new machine, so bootstrap the Python environment here instead of requiring a
-# separate manual step. Re-runs are no-ops once .venv exists.
+# a new machine, so install prerequisites (Python if missing + the .venv) here
+# instead of requiring a separate manual step. Re-runs are no-ops once .venv
+# exists. install_prerequisites.ps1 self-elevates to Administrator when Python
+# must be installed system-wide.
 $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
-    Write-Host "Primera vez: configurando el entorno de Python (instala Frida, un momento)..." -ForegroundColor Yellow
-    & (Join-Path $PSScriptRoot "bootstrap.ps1")
+    Write-Host "Primera vez: configurando el entorno de Python (instala Python/Frida si hace falta, un momento)..." -ForegroundColor Yellow
+    & (Join-Path $PSScriptRoot "install_prerequisites.ps1")
     if ($LASTEXITCODE -ne 0) {
-        throw "bootstrap.ps1 failed. Ensure Python 3.10+ is installed (https://www.python.org/downloads/) and retry."
+        throw "install_prerequisites.ps1 failed. See the error above (needs internet + Administrator for a fresh machine)."
     }
 }
 
