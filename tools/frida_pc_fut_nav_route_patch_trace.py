@@ -32,7 +32,11 @@ def _js_bytes(value: bytes) -> str:
     return ", ".join(f"0x{item:02x}" for item in value)
 
 
-def build_agent(ca_bytes: bytes, easw_session_value: str = "LOCAL-FIFA14-EASW-SESSION") -> str:
+def build_agent(
+    ca_bytes: bytes,
+    easw_session_value: str = "LOCAL-FIFA14-EASW-SESSION",
+    diagnose_mode: bool = False,
+) -> str:
     encoded_ca = base64.b64encode(ca_bytes).decode("ascii")
     encoded_easw = json.dumps(easw_session_value)
     agent = r"""
@@ -44,12 +48,12 @@ const EXPECTED_FIFA_IMAGE_SIZE = 0x04b7a000;
 // Store + ResetMatch paths were firing dozens of times per second and stalling
 // the render thread while packs were being browsed.
 const RUNTIME_PERFORMANCE_MODE = true;
-// BETA 2.25.1 diagnostic: tournament match kickoff aborts to fcc_logout ~16s
-// after accepting POST /match (same symptom as BETA 2.16).  Keep the heavy
-// traces off but turn the WebSession match-bridge trace (CreateMatch/MatchReady/
-// DestroyMatch/PlayGame/ResetMatch/UpdateTournament) back on to capture where
-// the client aborts before PlayGame.
-const MATCH_BRIDGE_TRACE_ENABLED = true;
+// BETA 2.25.1 diagnostic: the match-bridge trace (CreateMatch/MatchReady/
+// DestroyMatch/PlayGame/ResetMatch/UpdateTournament) is OFF by default for
+// parity with the all-in-one local runtime. It and the socket/DNS/long-wait
+// telemetry are re-enabled with --diagnose when a telemetry session is needed.
+const MATCH_BRIDGE_TRACE_ENABLED = false;
+const DIAGNOSE_MODE = __DIAGNOSE_MODE__;
 const CA_FUNCTION_RVA = 0x00d99790;
 const UPDATE_RVA = 0x00d9a0b0;
 const SCREEN_EVENT_DISPATCHER_RVA = 0x0010eca0;
@@ -537,6 +541,7 @@ function emit(kind, payload) {
   else if (count === 1001) send({kind: kind + '-suppressed', limit: 1000});
 }
 function emitDiagnostic(kind, payload) {
+  if (!DIAGNOSE_MODE) return;
   const count = (counters[kind] || 0) + 1;
   counters[kind] = count;
   send({kind: kind, index: count, time_ms: nowMs(), ...payload});
@@ -3737,7 +3742,7 @@ hookSend();
 hookWSASend();
 hookRecv();
 hookWSARecv();
-hookLongWaits();
+if (DIAGNOSE_MODE) hookLongWaits();
 
 const fifa = Process.getModuleByName('fifa14.exe');
 const fifaSizeOk = fifa.size === EXPECTED_FIFA_IMAGE_SIZE;
@@ -3996,6 +4001,7 @@ send({
         .replace("__UPDATE_SIGNATURE__", _js_bytes(UPDATE_SIGNATURE))
         .replace("__DISPATCH_SIGNATURE__", _js_bytes(SCREEN_EVENT_DISPATCHER_SIGNATURE))
         .replace("__EASW_SESSION_VALUE__", encoded_easw)
+        .replace("__DIAGNOSE_MODE__", "true" if diagnose_mode else "false")
     )
 
 
@@ -4008,6 +4014,11 @@ def main() -> int:
     parser.add_argument("--run-seconds", type=int, default=1800)
     parser.add_argument("--server-ip", default="127.0.0.1", help="LAN IP of the remote fifa14-fut-server redirector")
     parser.add_argument("--account", default="", help="FUT account key carried in identification.EASW-Session (empty = default account)")
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Enable the always-on diagnostic telemetry (match-bridge trace, socket/DNS/connect events, long-wait hooks). Off by default for local performance parity.",
+    )
     parser.add_argument("--print-agent", action="store_true")
     args = parser.parse_args()
 
@@ -4081,6 +4092,7 @@ def main() -> int:
     agent = build_agent(
         Path(args.ca_file).read_bytes(),
         easw_session_value=(args.account or "LOCAL-FIFA14-EASW-SESSION"),
+        diagnose_mode=args.diagnose,
     )
     agent = agent.replace("__SERVER_IP_BYTES__", _js_bytes(server_ip_octets))
     if args.print_agent:

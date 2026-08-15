@@ -1,3 +1,7 @@
+param(
+    [switch]$Diagnose
+)
+
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "common.ps1")
@@ -128,6 +132,10 @@ try {
     ) -join " "
     if ($accountKey) {
         $helperArgs = $helperArgs + " " + "--account" + " " + (Quote-Arg $accountKey)
+    }
+    if ($Diagnose) {
+        $helperArgs = $helperArgs + " " + "--diagnose"
+        Write-Host "Diagnostic telemetry enabled (--diagnose)" -ForegroundColor Yellow
     }
 
     $helper = Start-Process -FilePath $python -ArgumentList $helperArgs `
