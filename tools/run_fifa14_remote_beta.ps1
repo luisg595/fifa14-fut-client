@@ -22,23 +22,19 @@ $ServerHttpPort = $serverSettings.ServerHttpPort
 
 $accountKey = ""
 while ($true) {
-    $prompt = Read-Host "Account key (Enter = default; [A-Za-z0-9_-]{1,63})"
+    $prompt = Read-Host "Username (required; [A-Za-z0-9_-]{1,63})"
     $prompt = ($prompt | ForEach-Object { $_.Trim() })
     if ([string]::IsNullOrWhiteSpace($prompt)) {
-        $accountKey = ""
-        break
+        Write-Host "A username is required. Each person must enter their own." -ForegroundColor Yellow
+        continue
     }
     if ($prompt -match '^[A-Za-z0-9_-]{1,63}$') {
         $accountKey = $prompt
         break
     }
-    Write-Host "Invalid account key. Use only A-Z a-z 0-9 _ - (1-63 chars)." -ForegroundColor Yellow
+    Write-Host "Invalid username. Use only A-Z a-z 0-9 _ - (1-63 chars)." -ForegroundColor Yellow
 }
-if ($accountKey) {
-    Write-Host "Account: $accountKey" -ForegroundColor Cyan
-} else {
-    Write-Host "Account: (default)" -ForegroundColor Cyan
-}
+Write-Host "Account: $accountKey" -ForegroundColor Cyan
 
 # Persist the account chosen for this session so GIVE_100M_TEST_COINS.cmd can
 # target the same persona without asking (see give_coins_remote.ps1).
