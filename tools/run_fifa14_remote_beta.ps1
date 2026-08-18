@@ -76,6 +76,28 @@ if (-not $health.hasClub) {
 }
 Write-Host ("Server health OK (build " + $health.buildVersion + ", hasClub " + $health.hasClub + ", profileKind " + $health.profileKind + ")") -ForegroundColor Green
 
+# Fase 0a: register this PC's IP -> persona BEFORE the game opens so Blaze can
+# resolve identity from the very first launch. Pattern: give_coins_remote.ps1.
+# Failure is non-blocking: /ut/auth also binds the IP as a redundant path.
+if ([string]::IsNullOrWhiteSpace($serverSettings.AdminSecret)) {
+    Write-Host "AdminSecret not configured; skipping bind_client (identity will resolve via /ut/auth)." -ForegroundColor Yellow
+} else {
+    $bindUri = "http://${ServerHost}:${ServerHttpPort}/__fifa14_local_fut_admin/bind_client"
+    try {
+        $bindBody = @{ account = $accountKey } | ConvertTo-Json -Compress
+        $bindResult = Invoke-RestMethod -Uri $bindUri -Method Post `
+            -Headers @{ "X-Admin-Secret" = $serverSettings.AdminSecret } `
+            -ContentType "application/json" -Body $bindBody -TimeoutSec 10
+        if ($bindResult.bound) {
+            Write-Host ("bind_client OK: persona_id=" + $bindResult.persona_id + " client_ip=" + $bindResult.client_ip + " account=" + $bindResult.account) -ForegroundColor Cyan
+        } else {
+            Write-Host "bind_client answered but bound=false. Identity will resolve via /ut/auth." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host ("bind_client failed (non-blocking): " + $_.Exception.Message) -ForegroundColor Yellow
+    }
+}
+
 $routeStateDir = Join-Path $projectRoot "artifacts\fut-nav-route-v19"
 Write-Host "Restoring retail NAV route..."
 & $python (Join-Path $PSScriptRoot "patch_fifa14_fut_dynamic_route.py") --game-root $GameRoot --state-dir $routeStateDir --restore-retail --allow-unknown
